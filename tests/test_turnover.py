@@ -85,13 +85,13 @@ def test_cancel_ticket_and_out_of_service(client, team):
 
 
 def test_ticket_list_filters_and_timeline(client, team):
-    r2 = make_room(client, team["admin"], "102")
+    r2 = make_room(client, team["admin"], "Z9Q")
     t1 = open_ticket(client, team)
     open_ticket(client, team, room=r2, assign=False, priority="URGENT")
     page = client.get("/api/v1/turnover?priority=URGENT", headers=team["admin"]).json()
     assert page["total"] == 1
     page = client.get("/api/v1/turnover?status=HOUSEKEEPING_ASSIGNED&status=AWAITING_HOUSEKEEPING", headers=team["admin"]).json()
     assert page["total"] == 2
-    assert client.get("/api/v1/turnover?search=102", headers=team["admin"]).json()["total"] == 1
+    assert client.get("/api/v1/turnover?search=Z9Q", headers=team["admin"]).json()["total"] == 1
     tl = client.get(f"/api/v1/turnover/{t1['id']}/timeline", headers=team["admin"]).json()
     assert [e["action"] for e in tl] == ["TICKET_CREATED", "TICKET_ASSIGNED"]

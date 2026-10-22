@@ -31,6 +31,7 @@ class UserBrief(ORMModel):
     user_id: str
     display_name: str
     department: str
+    role: str = ""
 
 
 class MessageOut(BaseModel):

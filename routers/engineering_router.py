@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from core.permissions import require_admin, require_any, require_engineering, require_engineering_or_admin
+from core.permissions import require_admin, require_any, require_eng_supervisor_or_admin, require_engineering, require_engineering_or_admin
 from database.connection import get_db
 from models.enums import RepairStatus
 from models.user import User
@@ -51,8 +51,8 @@ def my_tickets(scope: Optional[Literal["all", "new", "assigned", "in_progress", 
 @router.get("/repairs", response_model=Page[RepairOut])
 def list_repairs(status: Optional[list[RepairStatus]] = Query(None), engineer_id: Optional[int] = None,
                  search: Optional[str] = None, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
-                 _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    """All repair requests (front desk monitoring)."""
+                 _: User = Depends(require_eng_supervisor_or_admin), db: Session = Depends(get_db)):
+    """All repair requests (front desk and engineering supervisors)."""
     rows, total = engineering_service.list_all(db, status, engineer_id, search, page, page_size)
     return Page(items=[repair_out(r) for r in rows], total=total, page=page, page_size=page_size)
 

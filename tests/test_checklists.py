@@ -4,22 +4,24 @@ from tests.conftest import make_room, open_ticket, room_type_id
 def test_checklist_crud_admin_only(client, team):
     r = client.post("/api/v1/checklists", headers=team["hk1"], json={"name": "X", "checklist_type": "HOUSEKEEPING_INSPECTION"})
     assert r.status_code == 403
-    r = client.post("/api/v1/checklists", headers=team["admin"], json={"name": "Balcony", "checklist_type": "HOUSEKEEPING_INSPECTION"})
+    r = client.post("/api/v1/checklists", headers=team["admin"], json={"name": "X", "checklist_type": "HOUSEKEEPING_INSPECTION"})
+    assert r.status_code == 403  # front desk no longer edits the form
+    r = client.post("/api/v1/checklists", headers=team["hk_sup"], json={"name": "Balcony", "checklist_type": "HOUSEKEEPING_INSPECTION"})
     assert r.status_code == 201 and r.json()["department"] == "HOUSEKEEPING"
     cid = r.json()["id"]
-    r = client.post(f"/api/v1/checklists/{cid}/items", headers=team["admin"],
+    r = client.post(f"/api/v1/checklists/{cid}/items", headers=team["hk_sup"],
                     json={"name": "Balcony door", "category": "Balcony", "allow_not_applicable": True, "display_order": 5})
     assert r.status_code == 201
     item_id = r.json()["id"]
     assert client.put(f"/api/v1/checklists/items/{item_id}", headers=team["eng1"], json={"name": "x"}).status_code == 403
-    r = client.put(f"/api/v1/checklists/items/{item_id}", headers=team["admin"], json={"is_mandatory": False})
+    r = client.put(f"/api/v1/checklists/items/{item_id}", headers=team["hk_sup"], json={"is_mandatory": False})
     assert r.json()["is_mandatory"] is False
-    r = client.put(f"/api/v1/checklists/items/{item_id}", headers=team["admin"], json={"room_type_ids": [9999]})
+    r = client.put(f"/api/v1/checklists/items/{item_id}", headers=team["hk_sup"], json={"room_type_ids": [9999]})
     assert r.status_code == 422
     lists = client.get("/api/v1/checklists?checklist_type=HOUSEKEEPING_INSPECTION", headers=team["hk1"]).json()
     assert {c["name"] for c in lists} >= {"Room inspection", "Balcony"}
-    assert client.delete(f"/api/v1/checklists/items/{item_id}", headers=team["admin"]).status_code == 200
-    assert client.delete(f"/api/v1/checklists/{cid}", headers=team["admin"]).status_code == 200
+    assert client.delete(f"/api/v1/checklists/items/{item_id}", headers=team["hk_sup"]).status_code == 200
+    assert client.delete(f"/api/v1/checklists/{cid}", headers=team["hk_sup"]).status_code == 200
     assert client.get(f"/api/v1/checklists/{cid}", headers=team["admin"]).status_code == 404
 
 
@@ -32,10 +34,10 @@ def test_checklist_changes_preserve_history(client, team):
     templates = client.get("/api/v1/checklists?checklist_type=HOUSEKEEPING_INSPECTION", headers=team["admin"]).json()
     tpl = templates[0]
     tv_item = next(i for i in tpl["items"] if i["name"] == "Television")
-    client.put(f"/api/v1/checklists/items/{tv_item['id']}", headers=team["admin"], json={"name": "Smart TV and casting"})
-    client.post(f"/api/v1/checklists/{tpl['id']}/items", headers=team["admin"], json={"name": "Coffee machine"})
+    client.put(f"/api/v1/checklists/items/{tv_item['id']}", headers=team["hk_sup"], json={"name": "Smart TV and casting"})
+    client.post(f"/api/v1/checklists/{tpl['id']}/items", headers=team["hk_sup"], json={"name": "Coffee machine"})
     door = next(i for i in tpl["items"] if i["name"] == "Door closer")
-    client.delete(f"/api/v1/checklists/items/{door['id']}", headers=team["admin"])
+    client.delete(f"/api/v1/checklists/items/{door['id']}", headers=team["hk_sup"])
 
     after = client.get(f"/api/v1/housekeeping/{t['id']}/checklist", headers=team["hk1"]).json()["session"]["results"]
     names = {r["item_name"] for r in after}
@@ -55,7 +57,7 @@ def test_checklist_changes_preserve_history(client, team):
 def test_room_type_applicability(client, team):
     suite = room_type_id(client, team["admin"], "Suite")
     tpl = client.get("/api/v1/checklists?checklist_type=HOUSEKEEPING_INSPECTION", headers=team["admin"]).json()[0]
-    client.post(f"/api/v1/checklists/{tpl['id']}/items", headers=team["admin"],
+    client.post(f"/api/v1/checklists/{tpl['id']}/items", headers=team["hk_sup"],
                 json={"name": "Living room sofa", "room_type_ids": [suite]})
     preview_std = client.get(f"/api/v1/checklists/preview?room_type_id={room_type_id(client, team['admin'])}",
                              headers=team["admin"]).json()
@@ -67,7 +69,7 @@ def test_room_type_applicability(client, team):
 def test_no_active_checklist_blocks_start(client, team):
     for tpl in client.get("/api/v1/checklists", headers=team["admin"]).json():
         if tpl["department"] == "HOUSEKEEPING":
-            client.put(f"/api/v1/checklists/{tpl['id']}", headers=team["admin"], json={"is_active": False})
+            client.put(f"/api/v1/checklists/{tpl['id']}", headers=team["hk_sup"], json={"is_active": False})
     t = open_ticket(client, team)
     r = client.post(f"/api/v1/housekeeping/{t['id']}/start", headers=team["hk1"])
     assert r.status_code == 409 and r.json()["error"]["code"] == "NO_CHECKLIST"

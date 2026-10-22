@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from core.exceptions import ForbiddenError, NotFoundError, ValidationFailedError, WorkflowError
 from database.base import utcnow
 from models.enums import (
-    OPEN_REPAIR_STATUSES, TERMINAL_TICKET_STATUSES, Department, ItemResult, OccupancyStatus, OperationalStatus,
+    OPEN_REPAIR_STATUSES, TERMINAL_TICKET_STATUSES, Department, ItemResult, OccupancyStatus, OperationalStatus, Role,
     Priority, RepairStatus, SessionKind, SessionOutcome, SessionStatus, TicketStatus,
 )
 from models.repair import RepairRequest
@@ -166,14 +166,15 @@ def assign(db: Session, actor: User, repair_id: int, engineer_id: int, reason: O
         raise WorkflowError(f"A {repair.status.value.lower()} repair cannot be assigned.")
     if ticket is not None and ticket.status in TERMINAL_TICKET_STATUSES:
         raise WorkflowError("The turnover ticket is closed.")
-    if actor.department == Department.ENGINEERING:
+    supervisor = actor.role in (Role.ADMIN, Role.ENG_SUPERVISOR)
+    if not supervisor and actor.department == Department.ENGINEERING:
         if engineer_id != actor.id:
             raise ForbiddenError("Engineers can only assign repairs to themselves.", code="SELF_ASSIGN_ONLY")
         if repair.assigned_engineer_id not in (None, actor.id):
             raise ForbiddenError("This repair is already assigned to another engineer.", code="NOT_ASSIGNEE")
-    elif actor.department != Department.FRONT_DESK:
+    elif not supervisor:
         raise ForbiddenError("You cannot assign repairs.")
-    if repair.status == RepairStatus.IN_PROGRESS and actor.department != Department.FRONT_DESK:
+    if repair.status == RepairStatus.IN_PROGRESS and not supervisor:
         raise WorkflowError("Repair is in progress.")
     engineer = wf.get_active_user(db, engineer_id, Department.ENGINEERING, "engineer")
     if repair.assigned_engineer_id == engineer.id and repair.status != RepairStatus.NEW:
@@ -304,7 +305,7 @@ def complete(db: Session, user: User, repair_id: int, *, requires_recleaning: bo
 
 def reopen(db: Session, user: User, repair_id: int, reason: str) -> RepairRequest:
     repair = get_repair(db, repair_id, lock=True)
-    if user.department == Department.ENGINEERING and repair.assigned_engineer_id not in (None, user.id):
+    if (user.role == Role.TECHNICIAN and repair.assigned_engineer_id not in (None, user.id)):
         raise ForbiddenError("Only the assigned engineer or the front desk can reopen this repair.")
     if user.department not in (Department.ENGINEERING, Department.FRONT_DESK):
         raise ForbiddenError("You cannot reopen repairs.")

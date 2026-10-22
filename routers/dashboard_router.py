@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.permissions import require_admin, require_any, require_engineering, require_housekeeping
+from core.permissions import require_admin, require_any, require_engineering, require_housekeeping, require_user_managers
 from database.connection import get_db
-from models.enums import Department
+from models.enums import Department, Role
 from models.user import User
 from schemas.common import UserBrief, user_brief
 from schemas.dashboard_schema import EngineeringSummary, FrontDeskSummary, HousekeepingSummary, NotificationOut
@@ -41,8 +41,11 @@ def notifications(since: Optional[datetime] = None, limit: int = Query(30, ge=1,
 
 
 @router.get("/staff", response_model=list[UserBrief])
-def staff(department: Department, _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    """Active staff of a department, for assignment pickers."""
-    rows = db.scalars(select(User).where(User.department == department, User.is_active.is_(True),
-                                         User.is_deleted.is_(False)).order_by(User.display_name)).all()
+def staff(department: Department, _: User = Depends(require_user_managers), db: Session = Depends(get_db)):
+    """Active room attendants (HOUSEKEEPING) or technicians (ENGINEERING), for assignment pickers."""
+    worker = {Department.HOUSEKEEPING: Role.ROOM_ATTENDANT, Department.ENGINEERING: Role.TECHNICIAN}.get(department)
+    stmt = select(User).where(User.department == department, User.is_active.is_(True), User.is_deleted.is_(False))
+    if worker is not None:
+        stmt = stmt.where(User.role == worker)
+    rows = db.scalars(stmt.order_by(User.display_name)).all()
     return [UserBrief.model_validate(u) for u in rows]

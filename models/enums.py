@@ -18,6 +18,39 @@ class Department(StrEnum):
     ENGINEERING = "ENGINEERING"
 
 
+class Role(StrEnum):
+    ADMIN = "ADMIN"                       # Front Desk
+    HK_SUPERVISOR = "HK_SUPERVISOR"       # Housekeeping
+    ROOM_ATTENDANT = "ROOM_ATTENDANT"     # Housekeeping
+    ENG_SUPERVISOR = "ENG_SUPERVISOR"     # Engineering
+    TECHNICIAN = "TECHNICIAN"             # Engineering
+
+
+ROLE_DEPARTMENT = {
+    Role.ADMIN: Department.FRONT_DESK,
+    Role.HK_SUPERVISOR: Department.HOUSEKEEPING,
+    Role.ROOM_ATTENDANT: Department.HOUSEKEEPING,
+    Role.ENG_SUPERVISOR: Department.ENGINEERING,
+    Role.TECHNICIAN: Department.ENGINEERING,
+}
+
+# Role given to existing accounts that only had a department
+DEFAULT_ROLE = {
+    Department.FRONT_DESK: Role.ADMIN,
+    Department.HOUSEKEEPING: Role.ROOM_ATTENDANT,
+    Department.ENGINEERING: Role.TECHNICIAN,
+}
+
+# Who may create, edit, deactivate and delete which accounts
+MANAGEABLE_ROLES = {
+    Role.ADMIN: {Role.ADMIN, Role.HK_SUPERVISOR, Role.ENG_SUPERVISOR},
+    Role.HK_SUPERVISOR: {Role.ROOM_ATTENDANT},
+    Role.ENG_SUPERVISOR: {Role.TECHNICIAN},
+}
+
+SUPERVISOR_ROLES = {Role.HK_SUPERVISOR, Role.ENG_SUPERVISOR}
+
+
 class OccupancyStatus(StrEnum):
     OCCUPIED = "OCCUPIED"
     VACANT = "VACANT"

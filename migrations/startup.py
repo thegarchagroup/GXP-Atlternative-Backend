@@ -142,11 +142,45 @@ def _m0003_direct_repairs(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE repair_requests ADD COLUMN blocks_room BOOLEAN NOT NULL DEFAULT 0")
 
 
+def _m0004_attachment_files(conn) -> None:
+    """Uploaded files are stored in the database (table attachment_files)."""
+    from models.inspection import AttachmentFile
+
+    AttachmentFile.__table__.create(bind=conn, checkfirst=True)
+
+
+def _m0005_user_roles(conn) -> None:
+    """Accounts get a role inside their department. Existing accounts: Front Desk -> ADMIN,
+    Housekeeping -> ROOM_ATTENDANT, Engineering -> TECHNICIAN."""
+    cols = {c["name"] for c in inspect(conn).get_columns("users")}
+    if "role" not in cols:
+        conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role VARCHAR(40) NOT NULL DEFAULT 'ADMIN'")
+        conn.exec_driver_sql("CREATE INDEX ix_users_role ON users (role)")
+    conn.exec_driver_sql("UPDATE users SET role='ROOM_ATTENDANT' WHERE department='HOUSEKEEPING' AND role='ADMIN'")
+    conn.exec_driver_sql("UPDATE users SET role='TECHNICIAN' WHERE department='ENGINEERING' AND role='ADMIN'")
+
+
 MIGRATIONS = [
     ("0001_initial_schema", _m0001_initial_schema),
     ("0002_seed_reference_data", _m0002_seed_reference_data),
     ("0003_direct_repairs", _m0003_direct_repairs),
+    ("0004_attachment_files", _m0004_attachment_files),
+    ("0005_user_roles", _m0005_user_roles),
 ]
+
+
+def import_disk_uploads() -> None:
+    """Move photos saved by older versions (in UPLOAD_DIR) into the database."""
+    from services.upload_service import import_files_from_disk
+
+    with SessionLocal() as db:
+        imported, missing = import_files_from_disk(db)
+    if imported:
+        logger.warning("Copied %s uploaded file(s) from %s into the database. The originals were left in place.",
+                       imported, settings.UPLOAD_DIR)
+    if missing:
+        logger.warning("%s uploaded file(s) are not in the database and not in %s on this computer "
+                       "(start the backend once on the computer that has them to copy them in).", missing, settings.UPLOAD_DIR)
 
 
 def run_migrations() -> list[str]:
@@ -174,7 +208,7 @@ def pending_migrations() -> list[str]:
 
 
 def create_admin(user_id: str, password: str, display_name: str, *, must_change: bool = True) -> str:
-    from models.enums import Department
+    from models.enums import Department, Role
     from models.user import User
     from repositories import user_repository
 
@@ -183,7 +217,7 @@ def create_admin(user_id: str, password: str, display_name: str, *, must_change:
     with SessionLocal() as db:
         if user_repository.get_by_login(db, user_id):
             raise ValueError(f"User ID '{user_id}' already exists.")
-        db.add(User(user_id=user_id, display_name=display_name, department=Department.FRONT_DESK,
+        db.add(User(user_id=user_id, display_name=display_name, department=Department.FRONT_DESK, role=Role.ADMIN,
                     password_hash=hash_password(password), must_change_password=must_change))
         db.commit()
     return user_id
@@ -218,4 +252,5 @@ def run_startup_tasks() -> None:
         pending = pending_migrations()
         if pending:
             raise RuntimeError(f"Pending migrations {pending}. Run: python -m migrations.cli migrate")
+    import_disk_uploads()
     bootstrap_admin_from_env()

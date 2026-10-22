@@ -5,7 +5,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base, TimestampMixin, enum_type
-from models.enums import Department
+from models.enums import Department, Role
 
 
 class User(Base, TimestampMixin):
@@ -15,6 +15,7 @@ class User(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     department: Mapped[Department] = mapped_column(enum_type(Department), nullable=False, index=True)
+    role: Mapped[Role] = mapped_column(enum_type(Role), nullable=False, index=True, default=Role.ADMIN)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -25,4 +26,8 @@ class User(Base, TimestampMixin):
 
     @property
     def is_admin(self) -> bool:
-        return self.department == Department.FRONT_DESK
+        return self.role == Role.ADMIN
+
+    @property
+    def is_supervisor(self) -> bool:
+        return self.role in (Role.HK_SUPERVISOR, Role.ENG_SUPERVISOR)

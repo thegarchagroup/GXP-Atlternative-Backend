@@ -49,6 +49,7 @@ def get_current_user(
     user = db.get(User, user_pk)
     if not user or user.is_deleted or not user.is_active:
         raise UnauthorizedError("This account is not active.", code="ACCOUNT_INACTIVE")
-    if payload.get("tv") != user.token_version or payload.get("dept") != user.department.value:
+    if (payload.get("tv") != user.token_version or payload.get("dept") != user.department.value
+            or payload.get("role", user.role.value) != user.role.value):
         raise UnauthorizedError("Your session is no longer valid. Please sign in again.", code="TOKEN_REVOKED")
     return user

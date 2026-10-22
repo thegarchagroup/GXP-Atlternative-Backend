@@ -127,3 +127,17 @@ def test_engineering_views_and_notifications(client, team):
     all_repairs = client.get("/api/v1/engineering/repairs", headers=team["admin"]).json()
     assert all_repairs["total"] == 1
     assert client.get("/api/v1/engineering/repairs", headers=team["eng1"]).status_code == 403
+
+
+def test_engineering_supervisor_assigns_any_technician(client, team):
+    ticket_id, repair_id = _failed_ticket(client, team)
+    # supervisor sees every repair and can assign any technician (a technician can only claim for themselves)
+    assert client.get("/api/v1/engineering/repairs", headers=team["eng_sup"]).json()["total"] == 1
+    assert client.get("/api/v1/engineering/repairs", headers=team["eng1"]).status_code == 403
+    r = client.post(f"/api/v1/engineering/{repair_id}/assign", headers=team["eng_sup"], json={"engineer_id": team["eng2_id"]})
+    assert r.status_code == 200 and r.json()["assigned_engineer"]["id"] == team["eng2_id"]
+    r = client.post(f"/api/v1/engineering/{repair_id}/assign", headers=team["eng_sup"],
+                    json={"engineer_id": team["eng1_id"], "reason": "Closer to the room"})
+    assert r.status_code == 200 and r.json()["assigned_engineer"]["id"] == team["eng1_id"]
+    staff = client.get("/api/v1/dashboard/staff?department=ENGINEERING", headers=team["eng_sup"]).json()
+    assert {s["user_id"] for s in staff} == {"eng.sunil", "eng.meera"}  # technicians only, no supervisor

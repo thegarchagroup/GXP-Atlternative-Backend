@@ -1,10 +1,12 @@
+from typing import Optional
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from core.exceptions import ConflictError, NotFoundError, ValidationFailedError
+from core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationFailedError
 from core.security import PASSWORD_RULES, hash_password, password_is_strong
 from models.audit import ActivityLog
-from models.enums import Department
+from models.enums import DEFAULT_ROLE, MANAGEABLE_ROLES, ROLE_DEPARTMENT, Department, Role
 from models.inspection import Attachment, InspectionResult, InspectionSession
 from models.repair import RepairRequest
 from models.turnover import TicketAssignment, TurnoverTicket
@@ -21,13 +23,39 @@ def get_user(db: Session, pk: int) -> User:
     return user
 
 
+def manageable_roles(actor: User) -> set:
+    return MANAGEABLE_ROLES.get(actor.role, set())
+
+
+def get_managed_user(db: Session, actor: User, pk: int) -> User:
+    """A user the actor is allowed to manage (others look like they don't exist)."""
+    user = get_user(db, pk)
+    if user.role not in manageable_roles(actor):
+        raise NotFoundError("User not found.")
+    return user
+
+
+def _resolve_role(actor: User, role: Optional[Role], department: Optional[Department]) -> Role:
+    allowed = manageable_roles(actor)
+    if role is None and department is not None:
+        # Older clients send only a department: pick the role this manager can create there.
+        candidates = [r for r in allowed if ROLE_DEPARTMENT[r] == department]
+        role = candidates[0] if len(candidates) == 1 else DEFAULT_ROLE[department]
+    if role is None:
+        raise ValidationFailedError("Choose a role.", code="ROLE_REQUIRED")
+    if role not in allowed:
+        raise ForbiddenError(f"You cannot manage {role.value.replace('_', ' ').lower()} accounts.", code="ROLE_NOT_ALLOWED")
+    return role
+
+
 def _ensure_not_last_admin(db: Session, user: User, action: str) -> None:
-    if user.department == Department.FRONT_DESK and user.is_active:
+    if user.role == Role.ADMIN and user.is_active:
         if user_repository.count_active_admins(db, exclude_id=user.id) == 0:
             raise ConflictError(f"Cannot {action} the last active Front Desk administrator.", code="LAST_ADMIN")
 
 
 def create_user(db: Session, actor: User, data: UserCreate) -> User:
+    role = _resolve_role(actor, data.role, data.department)
     if not password_is_strong(data.password):
         raise ValidationFailedError(f"Password must be {PASSWORD_RULES}.", code="WEAK_PASSWORD")
     if user_repository.get_by_login(db, data.user_id):
@@ -35,7 +63,8 @@ def create_user(db: Session, actor: User, data: UserCreate) -> User:
     user = User(
         user_id=data.user_id.strip(),
         display_name=data.display_name,
-        department=data.department,
+        department=ROLE_DEPARTMENT[role],
+        role=role,
         password_hash=hash_password(data.password),
         must_change_password=True,
         created_by_id=actor.id,
@@ -43,22 +72,26 @@ def create_user(db: Session, actor: User, data: UserCreate) -> User:
     db.add(user)
     db.flush()
     audit_service.log(db, actor=actor, action="USER_CREATED", entity_type="user", entity_id=user.id,
-                      message=f"Created user {user.user_id} ({user.department.value})")
+                      message=f"Created user {user.user_id} ({role.value})")
     db.commit()
     return user
 
 
 def update_user(db: Session, actor: User, pk: int, data: UserUpdate) -> User:
-    user = get_user(db, pk)
+    user = get_managed_user(db, actor, pk)
     changes = {}
     if data.display_name is not None and data.display_name.strip() != user.display_name:
         changes["display_name"] = [user.display_name, data.display_name.strip()]
         user.display_name = data.display_name.strip()
-    if data.department is not None and data.department != user.department:
-        _ensure_not_last_admin(db, user, "move")
-        changes["department"] = [user.department.value, data.department.value]
-        user.department = data.department
-        user.token_version += 1  # existing sessions carry the old department
+    new_role = None
+    if data.role is not None or data.department is not None:
+        new_role = _resolve_role(actor, data.role, data.department if data.role is None else None)
+    if new_role is not None and new_role != user.role:
+        _ensure_not_last_admin(db, user, "change the role of")
+        changes["role"] = [user.role.value, new_role.value]
+        user.role = new_role
+        user.department = ROLE_DEPARTMENT[new_role]
+        user.token_version += 1  # existing sessions carry the old role
     if changes:
         audit_service.log(db, actor=actor, action="USER_UPDATED", entity_type="user", entity_id=user.id,
                           message=f"Updated user {user.user_id}", details=changes)
@@ -67,7 +100,7 @@ def update_user(db: Session, actor: User, pk: int, data: UserUpdate) -> User:
 
 
 def set_status(db: Session, actor: User, pk: int, is_active: bool) -> User:
-    user = get_user(db, pk)
+    user = get_managed_user(db, actor, pk)
     if user.is_active == is_active:
         return user
     if not is_active:
@@ -82,7 +115,7 @@ def set_status(db: Session, actor: User, pk: int, is_active: bool) -> User:
 
 
 def reset_password(db: Session, actor: User, pk: int, new_password: str) -> User:
-    user = get_user(db, pk)
+    user = get_managed_user(db, actor, pk)
     if not password_is_strong(new_password):
         raise ValidationFailedError(f"Password must be {PASSWORD_RULES}.", code="WEAK_PASSWORD")
     user.password_hash = hash_password(new_password)
@@ -114,7 +147,7 @@ def _has_history(db: Session, pk: int) -> bool:
 
 def delete_user(db: Session, actor: User, pk: int) -> str:
     """Hard-delete only users with no history; otherwise soft-delete (keeps audit trail intact)."""
-    user = get_user(db, pk)
+    user = get_managed_user(db, actor, pk)
     if user.id == actor.id:
         raise ConflictError("You cannot delete your own account.", code="SELF_DELETE")
     _ensure_not_last_admin(db, user, "delete")

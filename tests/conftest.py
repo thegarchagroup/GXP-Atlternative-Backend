@@ -41,6 +41,7 @@ def _reset_database():
 @pytest.fixture
 def client():
     _reset_database()
+    _supervisors.clear()
     from services.auth_service import reset_throttle
 
     reset_throttle()
@@ -62,11 +63,35 @@ def admin(client):
     return login(client, "FRONT_DESK", "admin", "AdminPass123")
 
 
-def make_user(client, admin_headers, department, user_id, name=None):
-    r = client.post("/api/v1/users", headers=admin_headers, json={
-        "user_id": user_id, "display_name": name or user_id.title(), "department": department, "password": PASSWORD})
+SUPERVISOR_FOR = {"HOUSEKEEPING": "HK_SUPERVISOR", "ENGINEERING": "ENG_SUPERVISOR"}
+WORKER_FOR = {"HOUSEKEEPING": "ROOM_ATTENDANT", "ENGINEERING": "TECHNICIAN", "FRONT_DESK": "ADMIN"}
+_supervisors: dict = {}
+
+
+def create_account(client, creator_headers, role, user_id, name=None):
+    r = client.post("/api/v1/users", headers=creator_headers, json={
+        "user_id": user_id, "display_name": name or user_id.title(), "role": role, "password": PASSWORD})
     assert r.status_code == 201, r.text
-    return r.json()["id"], login(client, department, user_id)
+    return r.json()["id"]
+
+
+def supervisor(client, admin_headers, department):
+    """Headers for the department's supervisor (created on first use in each test)."""
+    key = (id(client), department)
+    if key not in _supervisors:
+        uid = {"HOUSEKEEPING": "hk.sup", "ENGINEERING": "eng.sup"}[department]
+        create_account(client, admin_headers, SUPERVISOR_FOR[department], uid, f"{department.title()} Supervisor")
+        _supervisors[key] = login(client, department, uid)
+    return _supervisors[key]
+
+
+def make_user(client, admin_headers, department, user_id, name=None, role=None):
+    """Create an account the way the app requires: admins and supervisors by Front Desk,
+    room attendants by the HK supervisor, technicians by the Engineering supervisor."""
+    role = role or WORKER_FOR[department]
+    creator = admin_headers if role in ("ADMIN", "HK_SUPERVISOR", "ENG_SUPERVISOR") else supervisor(client, admin_headers, department)
+    pk = create_account(client, creator, role, user_id, name)
+    return pk, login(client, department, user_id)
 
 
 def room_type_id(client, headers, name="Standard"):
@@ -89,7 +114,7 @@ def team(client, admin):
     eng2_id, eng2 = make_user(client, admin, "ENGINEERING", "eng.meera", "Meera")
     room = make_room(client, admin)
     return {
-        "admin": admin, "hk1": hk1, "hk1_id": hk1_id, "hk2": hk2, "hk2_id": hk2_id,
+        "admin": admin, "hk_sup": supervisor(client, admin, "HOUSEKEEPING"), "eng_sup": supervisor(client, admin, "ENGINEERING"), "hk1": hk1, "hk1_id": hk1_id, "hk2": hk2, "hk2_id": hk2_id,
         "eng1": eng1, "eng1_id": eng1_id, "eng2": eng2, "eng2_id": eng2_id, "room": room,
     }
 
