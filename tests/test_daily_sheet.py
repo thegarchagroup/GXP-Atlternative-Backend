@@ -244,3 +244,30 @@ def test_room_not_set_up_cannot_start(client, admin):
     client.post(f"/api/v1/housekeeping/daily-sheets/{s['id']}/assign", headers=sup, json={"entry_ids": [e["id"]], "ra_id": ra_id})
     r = client.post(f"/api/v1/housekeeping/runsheet/{e['id']}/start", headers=ra)
     assert r.status_code == 409 and r.json()["error"]["code"] == "ROOM_NOT_SET_UP"
+
+
+def test_sheet_with_another_date_is_visible_once_moved_to_today(client, admin):
+    """The reported problem: a PDF dated another day is filed under that day, so the RA's
+    runsheet for today is empty. The RA can see which dates have rooms, and the supervisor
+    can move the sheet to today without losing assignments."""
+    from tests.conftest import supervisor
+    sup = supervisor(client, admin, "HOUSEKEEPING")
+    ra_id, ra = make_user(client, admin, "HOUSEKEEPING", "ra.anita")
+    s = upload(client, sup).json()  # dated 17 Oct 2026 by the PDF
+    assert s["task_date"] == "2026-10-17"
+    e = next(x for x in s["rooms"] if x["room_number"] == "105")
+    client.post(f"/api/v1/housekeeping/daily-sheets/{s['id']}/assign", headers=sup, json={"entry_ids": [e["id"]], "ra_id": ra_id})
+    if today() != date(2026, 10, 17):
+        assert client.get("/api/v1/housekeeping/runsheet", headers=ra).json() == []
+    dates = client.get("/api/v1/housekeeping/runsheet/dates", headers=ra).json()
+    assert dates["dates"] == [{"task_date": "2026-10-17", "rooms": 1, "done": 0}]
+    assert [x["room_number"] for x in client.get("/api/v1/housekeeping/runsheet?task_date=2026-10-17", headers=ra).json()] == ["105"]
+    # supervisor moves it to today: the assignment comes along and the RA sees it
+    moved = client.post(f"/api/v1/housekeeping/daily-sheets/{s['id']}/move", headers=sup, json={"task_date": today().isoformat()})
+    assert moved.status_code == 200 and moved.json()["task_date"] == today().isoformat()
+    assert [x["room_number"] for x in client.get("/api/v1/housekeeping/runsheet", headers=ra).json()] == ["105"]
+    # can't move onto a date that already has a sheet; only the supervisor can move
+    other = upload(client, sup, date(2026, 1, 1)).json()
+    r = client.post(f"/api/v1/housekeeping/daily-sheets/{other['id']}/move", headers=sup, json={"task_date": today().isoformat()})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "SHEET_DATE_TAKEN"
+    assert client.post(f"/api/v1/housekeeping/daily-sheets/{s['id']}/move", headers=ra, json={"task_date": "2026-01-02"}).status_code == 403

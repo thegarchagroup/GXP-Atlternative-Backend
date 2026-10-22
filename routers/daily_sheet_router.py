@@ -2,6 +2,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -52,6 +53,16 @@ def task_sheet_for_date(task_date: date, _: User = Depends(supervisor_or_admin),
     return DailySheetOut(**sheet_out(sheet))
 
 
+class MoveRequest(BaseModel):
+    task_date: date
+
+
+@router.post("/daily-sheets/{sheet_id}/move", response_model=DailySheetOut)
+def move_task_sheet(sheet_id: int, body: MoveRequest, actor: User = Depends(supervisor), db: Session = Depends(get_db)):
+    """Use a sheet for another date (e.g. "use as today's sheet"). Assignments and finished work are kept."""
+    return DailySheetOut(**sheet_out(svc.move_sheet(db, actor, sheet_id, body.task_date)))
+
+
 @router.post("/daily-sheets/{sheet_id}/add-missing-rooms")
 def add_missing_rooms(sheet_id: int, actor: User = Depends(supervisor), db: Session = Depends(get_db)):
     """Create the task sheet's rooms that are not in the system yet (room types are created from their codes)."""
@@ -77,6 +88,12 @@ def _detail(db, entry):
     if s is not None:
         ids = list(db.scalars(select(RepairRequest.id).where(RepairRequest.source_session_id == s.id)).all())
     return daily_room_detail(entry, ids)
+
+
+@router.get("/runsheet/dates")
+def my_runsheet_dates(ra: User = Depends(attendant), db: Session = Depends(get_db)):
+    """Dates this room attendant has rooms on (newest first), so rooms on another day are never hidden."""
+    return {"today": svc.hotel_today(), "dates": svc.my_dates(db, ra)}
 
 
 @router.get("/runsheet/{entry_id}", response_model=DailyRoomDetailOut)

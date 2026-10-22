@@ -184,6 +184,42 @@ def add_missing_rooms(db: Session, actor: User, sheet_id: int) -> int:
     return created
 
 
+def move_sheet(db: Session, actor: User, sheet_id: int, new_date: date) -> DailySheet:
+    """Re-date a sheet (e.g. a PDF printed with another day's date), keeping assignments and work."""
+    from core.exceptions import ConflictError
+
+    sheet = get_sheet(db, sheet_id)
+    if sheet.task_date == new_date:
+        return sheet
+    other = get_sheet_by_date(db, new_date)
+    if other is not None:
+        raise ConflictError(f"There is already a task sheet for {new_date:%d %b %Y}. Open that date instead.",
+                            code="SHEET_DATE_TAKEN")
+    old = sheet.task_date
+    sheet.task_date = new_date
+    db.flush()
+    for entry in sheet.rooms:
+        _sync_room(entry.room, entry)
+    _log(db, actor, "TASK_SHEET_REDATED", f"Task sheet moved from {old:%d %b %Y} to {new_date:%d %b %Y}", sheet=sheet,
+         details={"from": old.isoformat(), "to": new_date.isoformat()})
+    db.commit()
+    db.refresh(sheet)
+    return sheet
+
+
+def my_dates(db: Session, ra: User, limit: int = 30) -> list[dict]:
+    """Dates on which this room attendant has rooms, newest first, with how many are finished."""
+    from sqlalchemy import case, func
+    rows = db.execute(
+        select(DailySheet.task_date, func.count(DailySheetRoom.id),
+               func.sum(case((DailySheetRoom.status == DailyRoomStatus.DONE, 1), else_=0)))
+        .join(DailySheetRoom, DailySheetRoom.sheet_id == DailySheet.id)
+        .where(DailySheetRoom.assigned_ra_id == ra.id)
+        .group_by(DailySheet.task_date).order_by(DailySheet.task_date.desc()).limit(limit)
+    ).all()
+    return [{"task_date": d, "rooms": int(n), "done": int(done or 0)} for d, n, done in rows]
+
+
 # --------------------------------------------------------------------------- assignment
 
 def _active_ra(db: Session, ra_id: int) -> User:
