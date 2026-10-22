@@ -91,9 +91,30 @@ class RepairStatus(StrEnum):
     COMPLETED = "COMPLETED"
     REOPENED = "REOPENED"
     CANCELLED = "CANCELLED"
+    PENDING = "PENDING"          # technician: not doable now
 
 
-OPEN_REPAIR_STATUSES = {RepairStatus.NEW, RepairStatus.ASSIGNED, RepairStatus.IN_PROGRESS, RepairStatus.REOPENED}
+OPEN_REPAIR_STATUSES = {RepairStatus.NEW, RepairStatus.ASSIGNED, RepairStatus.IN_PROGRESS, RepairStatus.REOPENED,
+                        RepairStatus.PENDING}
+
+
+class PendingReason(StrEnum):
+    NEEDS_PARTS = "NEEDS_PARTS"
+    NEEDS_VENDOR = "NEEDS_VENDOR"
+    NEEDS_VACANT_ROOM = "NEEDS_VACANT_ROOM"
+    NEEDS_MORE_TIME = "NEEDS_MORE_TIME"
+    OTHER = "OTHER"
+
+
+class RequestStatus(StrEnum):
+    NEW = "NEW"
+    ASSIGNED = "ASSIGNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    DONE = "DONE"
+    CANCELLED = "CANCELLED"
+
+
+OPEN_REQUEST_STATUSES = {RequestStatus.NEW, RequestStatus.ASSIGNED, RequestStatus.IN_PROGRESS}
 
 
 class Priority(StrEnum):

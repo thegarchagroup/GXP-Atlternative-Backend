@@ -172,6 +172,22 @@ def _m0006_daily_sheets(conn) -> None:
         conn.exec_driver_sql("CREATE INDEX ix_inspection_sessions_daily_room_id ON inspection_sessions (daily_room_id)")
 
 
+def _m0007_requests_and_pending(conn) -> None:
+    """Front desk guest requests, and "not doable now" (pending) repairs."""
+    from models.guest_request import GuestRequest
+
+    GuestRequest.__table__.create(bind=conn, checkfirst=True)
+    cols = {c["name"] for c in inspect(conn).get_columns("repair_requests")}
+    new_cols = [
+        ("pending_reason", "VARCHAR(40) NULL"), ("pending_note", "TEXT NULL"), ("expected_date", "DATE NULL"),
+        ("pending_since", "DATETIME NULL"), ("room_sellable", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("escalated", "BOOLEAN NOT NULL DEFAULT 0"), ("escalation_note", "TEXT NULL"),
+    ]
+    for name, ddl in new_cols:
+        if name not in cols:
+            conn.exec_driver_sql(f"ALTER TABLE repair_requests ADD COLUMN {name} {ddl}")
+
+
 MIGRATIONS = [
     ("0001_initial_schema", _m0001_initial_schema),
     ("0002_seed_reference_data", _m0002_seed_reference_data),
@@ -179,6 +195,7 @@ MIGRATIONS = [
     ("0004_attachment_files", _m0004_attachment_files),
     ("0005_user_roles", _m0005_user_roles),
     ("0006_daily_sheets", _m0006_daily_sheets),
+    ("0007_requests_and_pending", _m0007_requests_and_pending),
 ]
 
 

@@ -7,7 +7,7 @@ from core.exceptions import ForbiddenError, NotFoundError, ValidationFailedError
 from database.base import utcnow
 from models.enums import (
     OPEN_REPAIR_STATUSES, TERMINAL_TICKET_STATUSES, Department, ItemResult, OccupancyStatus, OperationalStatus, Role,
-    Priority, RepairStatus, SessionKind, SessionOutcome, SessionStatus, TicketStatus,
+    PendingReason, Priority, RepairStatus, SessionKind, SessionOutcome, SessionStatus, TicketStatus,
 )
 from models.repair import RepairRequest
 from models.room import Room
@@ -29,6 +29,7 @@ SCOPES = {
     "completed": [RepairStatus.COMPLETED],
     "reopened": [RepairStatus.REOPENED],
     "open": list(OPEN_REPAIR_STATUSES),
+    "pending": [RepairStatus.PENDING],
 }
 
 
@@ -333,6 +334,119 @@ def reopen(db: Session, user: User, repair_id: int, reason: str) -> RepairReques
     repair.last_reopen_reason = reason
     repair.completed_at = None
     _after_change(db, repair, user, "REPAIR_REOPENED", f"Repair {repair.repair_number} reopened", details={"reason": reason})
+    db.commit()
+    db.refresh(repair)
+    return repair
+
+
+# --------------------------------------------------------------------------- not doable now (pending)
+
+REASON_LABEL = {
+    PendingReason.NEEDS_PARTS: "needs parts", PendingReason.NEEDS_VENDOR: "needs an outside vendor",
+    PendingReason.NEEDS_VACANT_ROOM: "needs the room empty", PendingReason.NEEDS_MORE_TIME: "needs more time",
+    PendingReason.OTHER: "other",
+}
+
+
+def _is_manager(user: User) -> bool:
+    return user.role in (Role.ENG_SUPERVISOR, Role.ADMIN)
+
+
+def mark_pending(db: Session, user: User, repair_id: int, *, reason: PendingReason, note: str,
+                 expected_date, room_sellable: bool) -> RepairRequest:
+    """The technician can't fix it now. The room stays off sale only if it can't be sold."""
+    repair = get_repair(db, repair_id, lock=True)
+    _ensure_assignee(user, repair)
+    if repair.status not in (RepairStatus.ASSIGNED, RepairStatus.IN_PROGRESS, RepairStatus.REOPENED):
+        raise WorkflowError("Only a repair you are working on can be marked not doable now.")
+    if not (note or "").strip():
+        raise ValidationFailedError("Say what is needed.", code="PENDING_NOTE_REQUIRED")
+    repair.status = RepairStatus.PENDING
+    repair.pending_reason = reason
+    repair.pending_note = note.strip()
+    repair.expected_date = expected_date
+    repair.pending_since = utcnow()
+    repair.room_sellable = room_sellable
+    room = repair.room
+    if repair.ticket is None:
+        repair.blocks_room = (not room_sellable) and room.occupancy_status == OccupancyStatus.VACANT
+    msg = f"{user.display_name}: repair {repair.repair_number} not doable now ({REASON_LABEL[reason]})"
+    if expected_date:
+        msg += f", expected by {expected_date:%d %b}"
+    _after_change(db, repair, user, "REPAIR_PENDING", msg,
+                  details={"reason": reason.value, "note": repair.pending_note, "room_sellable": room_sellable,
+                           "expected_date": expected_date.isoformat() if expected_date else None})
+    db.commit()
+    db.refresh(repair)
+    return repair
+
+
+def resume(db: Session, user: User, repair_id: int) -> RepairRequest:
+    repair = get_repair(db, repair_id, lock=True)
+    _ensure_assignee(user, repair)
+    if repair.status != RepairStatus.PENDING:
+        raise WorkflowError("Only a pending repair can be resumed.")
+    session = current_session(repair)
+    if session is None or session.status != SessionStatus.IN_PROGRESS:
+        wf.start_session(db, repair.ticket, kind=SessionKind.ENGINEERING, inspector=user, repair=repair)
+    repair.status = RepairStatus.IN_PROGRESS
+    repair.started_at = repair.started_at or utcnow()
+    _after_change(db, repair, user, "REPAIR_RESUMED", f"{user.display_name} resumed repair {repair.repair_number}")
+    db.commit()
+    db.refresh(repair)
+    return repair
+
+
+def reschedule(db: Session, user: User, repair_id: int, expected_date, note: Optional[str]) -> RepairRequest:
+    repair = get_repair(db, repair_id, lock=True)
+    if not _is_manager(user):
+        _ensure_assignee(user, repair)
+    if repair.status != RepairStatus.PENDING:
+        raise WorkflowError("Only pending repairs can be rescheduled.")
+    old = repair.expected_date
+    repair.expected_date = expected_date
+    if note and note.strip():
+        repair.pending_note = f"{repair.pending_note or ''}\n{note.strip()}".strip()
+    audit_service.log(db, actor=user, action="REPAIR_RESCHEDULED", entity_type="repair", entity_id=repair.id,
+                      repair_id=repair.id, room_id=repair.room_id, ticket_id=repair.ticket_id,
+                      message=f"Repair {repair.repair_number} expected by {expected_date:%d %b}" if expected_date
+                      else f"Repair {repair.repair_number}: expected date cleared",
+                      details={"from": old.isoformat() if old else None, "to": expected_date.isoformat() if expected_date else None,
+                               "note": note})
+    db.commit()
+    db.refresh(repair)
+    return repair
+
+
+def escalate(db: Session, user: User, repair_id: int, note: str) -> RepairRequest:
+    repair = get_repair(db, repair_id, lock=True)
+    if not _is_manager(user):
+        raise ForbiddenError("Only the engineering supervisor or front desk can escalate.")
+    if repair.status not in OPEN_REPAIR_STATUSES:
+        raise WorkflowError("Only open repairs can be escalated.")
+    repair.escalated = True
+    repair.escalation_note = note
+    repair.priority = Priority.URGENT
+    audit_service.log(db, actor=user, action="REPAIR_ESCALATED", entity_type="repair", entity_id=repair.id,
+                      repair_id=repair.id, room_id=repair.room_id, ticket_id=repair.ticket_id,
+                      message=f"Repair {repair.repair_number} escalated to urgent by {user.display_name}", details={"note": note})
+    db.commit()
+    db.refresh(repair)
+    return repair
+
+
+def cancel(db: Session, user: User, repair_id: int, reason: str) -> RepairRequest:
+    repair = get_repair(db, repair_id, lock=True)
+    if not _is_manager(user):
+        raise ForbiddenError("Only the engineering supervisor or front desk can cancel a repair.")
+    if repair.status not in OPEN_REPAIR_STATUSES:
+        raise WorkflowError("Only open repairs can be cancelled.")
+    for s in repair.sessions:
+        if s.status == SessionStatus.IN_PROGRESS:
+            s.status = SessionStatus.SUPERSEDED
+    repair.status = RepairStatus.CANCELLED
+    _after_change(db, repair, user, "REPAIR_CANCELLED", f"Repair {repair.repair_number} cancelled by {user.display_name}",
+                  details={"reason": reason})
     db.commit()
     db.refresh(repair)
     return repair

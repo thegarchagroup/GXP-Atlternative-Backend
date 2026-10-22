@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.base import Base, TimestampMixin, enum_type
-from models.enums import Priority, RepairStatus
+from models.enums import PendingReason, Priority, RepairStatus
 
 
 class RepairRequest(Base, TimestampMixin):
@@ -30,6 +30,14 @@ class RepairRequest(Base, TimestampMixin):
     requires_recleaning: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reopen_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_reopen_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # "not doable now"
+    pending_reason: Mapped[Optional[PendingReason]] = mapped_column(enum_type(PendingReason), nullable=True)
+    pending_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expected_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    pending_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    room_sellable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    escalated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    escalation_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)

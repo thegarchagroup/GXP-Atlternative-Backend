@@ -1,7 +1,8 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from models.enums import OPEN_REPAIR_STATUSES, OccupancyStatus, OperationalStatus, RepairStatus, TicketStatus
+from models.guest_request import GuestRequest
+from models.enums import OPEN_REQUEST_STATUSES, OPEN_REPAIR_STATUSES, OccupancyStatus, OperationalStatus, RepairStatus, TicketStatus
 from models.repair import RepairRequest
 from models.room import Room
 from models.turnover import TurnoverTicket
@@ -41,6 +42,9 @@ def frontdesk(db: Session) -> FrontDeskSummary:
         out_of_service=op(OperationalStatus.OUT_OF_SERVICE),
         open_tickets=open_tickets,
         open_repairs=open_repairs,
+        pending_repairs=db.scalar(select(func.count(RepairRequest.id)).where(RepairRequest.status == RepairStatus.PENDING)) or 0,
+        open_requests=db.scalar(select(func.count(GuestRequest.id)).where(GuestRequest.status.in_(list(OPEN_REQUEST_STATUSES))))
+        or 0,
     )
 
 
@@ -79,4 +83,5 @@ def engineering(db: Session, user: User) -> EngineeringSummary:
         awaiting_verification=awaiting,
         completed=mine.get(RepairStatus.COMPLETED, 0),
         reopened=mine.get(RepairStatus.REOPENED, 0),
+        pending=mine.get(RepairStatus.PENDING, 0),
     )

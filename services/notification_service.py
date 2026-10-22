@@ -16,17 +16,21 @@ HIDDEN_ACTIONS = {"AUTH_LOGIN", "AUTH_LOGOUT", "AUTH_PASSWORD_CHANGED"}
 
 def for_user(db: Session, user: User, since: Optional[datetime], limit: int = 30, include_own: bool = False) -> list[ActivityLog]:
     stmt = select(ActivityLog).where(ActivityLog.action.not_in(HIDDEN_ACTIONS),
-                                    or_(ActivityLog.ticket_id.is_not(None), ActivityLog.repair_id.is_not(None)))
+                                    or_(ActivityLog.ticket_id.is_not(None), ActivityLog.repair_id.is_not(None),
+                                        ActivityLog.entity_type.in_(["guest_request", "daily_sheet", "daily_room"])))
     if user.role == Role.HK_SUPERVISOR:
         stmt = select(ActivityLog).where(ActivityLog.action.not_in(HIDDEN_ACTIONS),
-                                         ActivityLog.entity_type.in_(["daily_room", "daily_sheet"]))
+                                         ActivityLog.entity_type.in_(["daily_room", "daily_sheet", "guest_request"]))
     elif user.department == Department.HOUSEKEEPING:
         from models.daily_sheet import DailySheetRoom
         mine = select(DailySheetRoom.id).where(DailySheetRoom.assigned_ra_id == user.id)
         my_tickets = select(TurnoverTicket.id).where(TurnoverTicket.assigned_housekeeper_id == user.id)
+        from models.guest_request import GuestRequest
+        my_requests = select(GuestRequest.id).where(GuestRequest.assigned_ra_id == user.id)
         stmt = select(ActivityLog).where(ActivityLog.action.not_in(HIDDEN_ACTIONS), or_(
             ActivityLog.ticket_id.in_(my_tickets),
-            and_(ActivityLog.entity_type == "daily_room", ActivityLog.entity_id.in_(mine))))
+            and_(ActivityLog.entity_type == "daily_room", ActivityLog.entity_id.in_(mine)),
+            and_(ActivityLog.entity_type == "guest_request", ActivityLog.entity_id.in_(my_requests))))
     elif user.department == Department.ENGINEERING:
         my_repairs = select(RepairRequest.id).where(or_(RepairRequest.assigned_engineer_id == user.id,
                                                         RepairRequest.assigned_engineer_id.is_(None)))

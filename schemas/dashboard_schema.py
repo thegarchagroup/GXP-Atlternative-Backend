@@ -20,6 +20,8 @@ class FrontDeskSummary(BaseModel):
     out_of_service: int
     open_tickets: int
     open_repairs: int
+    pending_repairs: int = 0
+    open_requests: int = 0
 
 
 class HousekeepingSummary(BaseModel):
@@ -37,6 +39,7 @@ class EngineeringSummary(BaseModel):
     awaiting_verification: int
     completed: int
     reopened: int
+    pending: int = 0
 
 
 class NotificationOut(BaseModel):

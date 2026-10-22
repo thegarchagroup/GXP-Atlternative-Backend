@@ -49,7 +49,7 @@ from models.user import User  # noqa: E402
 
 # Cleared in every reset (order does not matter: foreign key checks are paused).
 ACTIVITY_TABLES = [
-    "daily_sheet_rooms", "daily_sheets", "attachment_files", "attachments", "inspection_results", "inspection_sessions", "ticket_assignments",
+    "guest_requests", "daily_sheet_rooms", "daily_sheets", "attachment_files", "attachments", "inspection_results", "inspection_sessions", "ticket_assignments",
     "repair_requests", "ticket_activity_logs", "turnover_tickets",
 ]
 SETUP_TABLES = ["rooms", "checklist_template_items", "checklist_templates", "room_types"]

@@ -50,7 +50,7 @@ class Room(Base, TimestampMixin):
     open_repairs = relationship(
         "RepairRequest",
         primaryjoin="and_(Room.id == foreign(RepairRequest.room_id), "
-                    "RepairRequest.status.in_(['NEW', 'ASSIGNED', 'IN_PROGRESS', 'REOPENED']))",
+                    "RepairRequest.status.in_(['NEW', 'ASSIGNED', 'IN_PROGRESS', 'REOPENED', 'PENDING']))",
         viewonly=True,
         lazy="selectin",
     )

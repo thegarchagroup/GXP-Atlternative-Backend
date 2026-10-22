@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from core.exceptions import ForbiddenError
 from core.permissions import require_admin, require_any, require_eng_supervisor_or_admin, require_engineering, require_engineering_or_admin
 from database.connection import get_db
 from models.enums import RepairStatus
@@ -12,7 +13,7 @@ from models.user import User
 from schemas.common import Page
 from schemas.inspection_schema import EngineeringChecklistSaveRequest, InspectionSessionOut, result_out, session_out
 from schemas.repair_schema import (
-    DirectRepairCreate, RepairAssignRequest, RepairCompleteRequest, RepairDetailOut, RepairOut, RepairReopenRequest, repair_out,
+    DirectRepairCreate, NoteRequest, PendingRequest, RepairAssignRequest, RepairCompleteRequest, RescheduleRequest, RepairDetailOut, RepairOut, RepairReopenRequest, repair_out,
 )
 from services import engineering_service
 
@@ -39,7 +40,7 @@ def build_repair_detail(db: Session, repair) -> RepairDetailOut:
 
 @router.get("/my-tickets", response_model=Page[RepairOut])
 def my_tickets(scope: Optional[Literal["all", "new", "assigned", "in_progress", "awaiting_verification", "completed",
-                                       "reopened", "open"]] = "all",
+                                       "reopened", "open", "pending"]] = "all",
                search: Optional[str] = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
                user: User = Depends(require_engineering), db: Session = Depends(get_db)):
     """Repairs assigned to me, plus unassigned requests the team can claim (scope=all or new)."""
@@ -65,6 +66,48 @@ def create_direct_repair(body: DirectRepairCreate, actor: User = Depends(require
     repair = engineering_service.create_direct(db, actor, room_id=body.room_id, reported_defect=body.reported_defect,
                                                priority=body.priority, engineer_id=body.engineer_id)
     return build_repair_detail(db, repair)
+
+
+@router.get("/pending", response_model=list[RepairOut])
+def pending_repairs(user: User = Depends(require_any), db: Session = Depends(get_db)):
+    """Repairs marked "not doable now", oldest first. Technicians see their own."""
+    from sqlalchemy import select
+    from models.enums import Role
+    from models.repair import RepairRequest
+    stmt = select(RepairRequest).where(RepairRequest.status == RepairStatus.PENDING)
+    if user.role == Role.TECHNICIAN:
+        stmt = stmt.where(RepairRequest.assigned_engineer_id == user.id)
+    elif user.role not in (Role.ADMIN, Role.ENG_SUPERVISOR):
+        raise ForbiddenError("Your role does not have access to pending repairs.")
+    rows = db.scalars(stmt.order_by(RepairRequest.pending_since.asc(), RepairRequest.id)).unique().all()
+    return [repair_out(r) for r in rows]
+
+
+@router.post("/{repair_id}/pending", response_model=RepairDetailOut)
+def mark_pending(repair_id: int, body: PendingRequest, user: User = Depends(require_engineering), db: Session = Depends(get_db)):
+    """Technician: can't be fixed now. Gives a reason, a note, an expected date and whether the room can still be sold."""
+    return build_repair_detail(db, engineering_service.mark_pending(
+        db, user, repair_id, reason=body.reason, note=body.note, expected_date=body.expected_date, room_sellable=body.room_sellable))
+
+
+@router.post("/{repair_id}/resume", response_model=RepairDetailOut)
+def resume(repair_id: int, user: User = Depends(require_engineering), db: Session = Depends(get_db)):
+    return build_repair_detail(db, engineering_service.resume(db, user, repair_id))
+
+
+@router.post("/{repair_id}/reschedule", response_model=RepairDetailOut)
+def reschedule(repair_id: int, body: RescheduleRequest, user: User = Depends(require_engineering_or_admin), db: Session = Depends(get_db)):
+    return build_repair_detail(db, engineering_service.reschedule(db, user, repair_id, body.expected_date, body.note))
+
+
+@router.post("/{repair_id}/escalate", response_model=RepairDetailOut)
+def escalate(repair_id: int, body: NoteRequest, user: User = Depends(require_eng_supervisor_or_admin), db: Session = Depends(get_db)):
+    return build_repair_detail(db, engineering_service.escalate(db, user, repair_id, body.note))
+
+
+@router.post("/{repair_id}/cancel", response_model=RepairDetailOut)
+def cancel(repair_id: int, body: NoteRequest, user: User = Depends(require_eng_supervisor_or_admin), db: Session = Depends(get_db)):
+    return build_repair_detail(db, engineering_service.cancel(db, user, repair_id, body.note))
 
 
 @router.get("/{repair_id}", response_model=RepairDetailOut)

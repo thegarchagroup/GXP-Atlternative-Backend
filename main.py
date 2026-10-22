@@ -20,6 +20,7 @@ from routers.rooms_router import router as rooms_router  # noqa: E402
 from routers.turnover_router import router as turnover_router  # noqa: E402
 from routers.daily_sheet_router import router as daily_sheet_router  # noqa: E402
 from routers.housekeeping_router import router as housekeeping_router  # noqa: E402
+from routers.guest_request_router import router as guest_request_router  # noqa: E402
 from routers.engineering_router import router as engineering_router  # noqa: E402
 from routers.checklist_router import router as checklist_router  # noqa: E402
 from routers.dashboard_router import router as dashboard_router  # noqa: E402
@@ -56,6 +57,7 @@ app.include_router(rooms_router)
 app.include_router(turnover_router)
 app.include_router(daily_sheet_router)
 app.include_router(housekeeping_router)
+app.include_router(guest_request_router)
 app.include_router(engineering_router)
 app.include_router(checklist_router)
 app.include_router(dashboard_router)

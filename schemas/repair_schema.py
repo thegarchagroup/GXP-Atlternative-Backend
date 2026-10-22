@@ -1,8 +1,9 @@
+from datetime import date
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from models.enums import Priority, RepairStatus
+from models.enums import PendingReason, Priority, RepairStatus
 from schemas.common import UserBrief, UTCDateTime, user_brief
 from schemas.inspection_schema import InspectionResultOut, InspectionSessionOut, Progress, compute_progress
 
@@ -35,6 +36,15 @@ class RepairOut(BaseModel):
     created_at: UTCDateTime
     updated_at: UTCDateTime
     progress: Optional[Progress] = None
+    pending_reason: Optional[PendingReason] = None
+    pending_note: Optional[str] = None
+    expected_date: Optional[date] = None
+    pending_since: Optional[UTCDateTime] = None
+    days_pending: Optional[int] = None
+    overdue: bool = False
+    room_sellable: bool = True
+    escalated: bool = False
+    escalation_note: Optional[str] = None
 
 
 class RepairDetailOut(RepairOut):
@@ -49,6 +59,22 @@ class DirectRepairCreate(BaseModel):
     reported_defect: str = Field(min_length=3, max_length=5000)
     priority: Priority = Priority.NORMAL
     engineer_id: Optional[int] = None
+
+
+class PendingRequest(BaseModel):
+    reason: PendingReason
+    note: str = Field(min_length=2, max_length=2000)
+    expected_date: Optional[date] = None
+    room_sellable: bool = True
+
+
+class RescheduleRequest(BaseModel):
+    expected_date: Optional[date] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+
+class NoteRequest(BaseModel):
+    note: str = Field(min_length=2, max_length=2000)
 
 
 class RepairAssignRequest(BaseModel):
@@ -96,4 +122,23 @@ def repair_out(r) -> RepairOut:
         created_at=r.created_at,
         updated_at=r.updated_at,
         progress=compute_progress(current.results) if current else None,
+        pending_reason=r.pending_reason if r.status == RepairStatus.PENDING else None,
+        pending_note=r.pending_note if r.status == RepairStatus.PENDING else None,
+        expected_date=r.expected_date if r.status == RepairStatus.PENDING else None,
+        pending_since=r.pending_since if r.status == RepairStatus.PENDING else None,
+        days_pending=_days_since(r.pending_since) if r.status == RepairStatus.PENDING else None,
+        overdue=bool(r.status == RepairStatus.PENDING and r.expected_date and r.expected_date < _today()),
+        room_sellable=r.room_sellable, escalated=r.escalated, escalation_note=r.escalation_note,
     )
+
+
+def _today():
+    from services.daily_sheet_service import hotel_today
+    return hotel_today()
+
+
+def _days_since(dt):
+    if dt is None:
+        return None
+    from datetime import datetime as _dt
+    return max(0, (_dt.utcnow() - dt).days)
