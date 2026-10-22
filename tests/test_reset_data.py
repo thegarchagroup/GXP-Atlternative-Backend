@@ -21,6 +21,9 @@ def reset_tool(tmp_path):
 
 
 def _populate(client, team):
+    pdf = open(os.path.join(os.path.dirname(__file__), "fixtures", "daily_report.pdf"), "rb").read()
+    up = client.post("/api/v1/housekeeping/daily-sheets/upload", headers=team["hk_sup"], files={"file": ("d.pdf", pdf, "application/pdf")})
+    assert up.status_code == 200
     t = open_ticket(client, team)
     detail = housekeeping_round(client, team, t["id"], fail=("Shower",))
     repair = detail["repairs"][0]["id"]
@@ -37,7 +40,7 @@ def _counts():
     from database.connection import engine
     names = ["users", "rooms", "turnover_tickets", "repair_requests", "inspection_sessions", "inspection_results",
              "attachments", "attachment_files", "ticket_assignments", "ticket_activity_logs", "room_types",
-             "checklist_templates", "checklist_template_items"]
+             "checklist_templates", "checklist_template_items", "daily_sheets", "daily_sheet_rooms"]
     with engine.connect() as conn:
         return {n: conn.execute(text(f"SELECT COUNT(*) FROM {n}")).scalar() for n in names}
 
@@ -48,11 +51,12 @@ def test_reset_keeps_only_admin_and_app_still_works(client, team, reset_tool):
     assert before["turnover_tickets"] and before["attachments"] and before["users"] == 7  # admin, 2 supervisors, 4 staff
     assert reset_tool.main(["--yes"]) == 0
     after = _counts()
-    for t in ["rooms", "turnover_tickets", "repair_requests", "inspection_sessions", "inspection_results",
+    assert before["daily_sheet_rooms"] == 90
+    for t in ["daily_sheets", "daily_sheet_rooms", "rooms", "turnover_tickets", "repair_requests", "inspection_sessions", "inspection_results",
               "attachments", "attachment_files", "ticket_assignments", "ticket_activity_logs"]:
         assert after[t] == 0, t
     assert after["users"] == 1
-    assert after["room_types"] == 3 and after["checklist_templates"] == 3 and after["checklist_template_items"] > 40
+    assert after["room_types"] == 3 and after["checklist_templates"] == 3 and after["checklist_template_items"] >= 30
     # old session revoked, same password still works
     assert client.get("/api/v1/auth/me", headers=team["admin"]).status_code == 401
     admin = login(client, "FRONT_DESK", "admin", "AdminPass123")

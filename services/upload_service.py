@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from core.config import settings
 from core.exceptions import ForbiddenError, NotFoundError, ValidationFailedError
-from models.enums import Department, SessionKind
-from models.inspection import Attachment
+from models.enums import Department, Role, SessionKind
+from models.inspection import Attachment, AttachmentFile
 from models.user import User
 from repositories import turnover_repository
 from services import audit_service
@@ -69,15 +69,12 @@ async def save_upload(db: Session, user: User, file: UploadFile, ticket_id: Opti
     if ctype is None:
         raise ValidationFailedError("Only JPEG, PNG, WebP images and PDF files are allowed.", code="FILE_TYPE")
 
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     stored = f"{uuid.uuid4().hex}{ALLOWED[ctype][0]}"
-    path = os.path.join(settings.UPLOAD_DIR, stored)
-    with open(path, "wb") as fh:
-        fh.write(data)
     original = os.path.basename(file.filename or "upload")[:255]
     att = Attachment(original_filename=original, stored_filename=stored, content_type=ctype, size_bytes=len(data),
                      uploaded_by_id=user.id, ticket_id=ticket.id if ticket else None, repair_id=repair_id,
                      caption=(caption or None))
+    att.file = AttachmentFile(data=data)
     db.add(att)
     db.flush()
     audit_service.log(db, actor=user, action="ATTACHMENT_UPLOADED", entity_type="attachment", entity_id=att.id,
@@ -86,11 +83,12 @@ async def save_upload(db: Session, user: User, file: UploadFile, ticket_id: Opti
     return att
 
 
-def get_for_download(db: Session, user: User, attachment_id: int) -> tuple[Attachment, str]:
+def get_for_download(db: Session, user: User, attachment_id: int) -> tuple[Attachment, bytes]:
     att = db.get(Attachment, attachment_id)
     if not att:
         raise NotFoundError("File not found.")
-    allowed = user.department == Department.FRONT_DESK or att.uploaded_by_id == user.id
+    allowed = (user.department == Department.FRONT_DESK or att.uploaded_by_id == user.id
+               or user.role in (Role.HK_SUPERVISOR, Role.ENG_SUPERVISOR))
     if not allowed and not att.ticket_id and att.repair_id and user.department == Department.ENGINEERING:
         allowed = True
     if not allowed and att.ticket_id:
@@ -101,7 +99,33 @@ def get_for_download(db: Session, user: User, attachment_id: int) -> tuple[Attac
             allowed = wf.can_view_ticket(user, ticket)
     if not allowed:
         raise ForbiddenError("You cannot view this file.")
+    if att.file is not None:
+        return att, att.file.data
+    # Older uploads saved on disk before files moved into the database
     path = os.path.join(settings.UPLOAD_DIR, att.stored_filename)
-    if not os.path.isfile(path):
-        raise NotFoundError("File is missing from storage.")
-    return att, path
+    if os.path.isfile(path):
+        with open(path, "rb") as fh:
+            return att, fh.read()
+    raise NotFoundError("This file is not in the database, and the original upload is not on this computer.",
+                        code="FILE_MISSING")
+
+
+def import_files_from_disk(db: Session) -> tuple[int, int]:
+    """Copy uploads saved as files (older versions) into the database. Safe to run repeatedly:
+    only attachments that have no stored bytes yet are touched, and files on disk are left in place.
+    Returns (imported, still_missing)."""
+    from sqlalchemy import select
+
+    pending = list(db.scalars(select(Attachment).outerjoin(AttachmentFile, AttachmentFile.attachment_id == Attachment.id)
+                              .where(AttachmentFile.attachment_id.is_(None))).unique().all())
+    imported = missing = 0
+    for att in pending:
+        path = os.path.join(settings.UPLOAD_DIR, att.stored_filename)
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                att.file = AttachmentFile(data=fh.read())
+            imported += 1
+            db.commit()  # one at a time keeps each write small over a remote connection
+        else:
+            missing += 1
+    return imported, missing

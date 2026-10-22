@@ -47,8 +47,8 @@ def _m0002_seed_reference_data(conn) -> None:
                 db.add(RoomType(name=name, category=category, description=desc))
         if not db.scalar(select(ChecklistTemplate.id).limit(1)):
             for ctype, title, items in (
-                (ChecklistType.HOUSEKEEPING_CLEANING, "Room cleaning tasks", seed_data.HOUSEKEEPING_CLEANING),
-                (ChecklistType.HOUSEKEEPING_INSPECTION, "Room inspection", seed_data.HOUSEKEEPING_INSPECTION),
+                (ChecklistType.HOUSEKEEPING_CLEANING, "Cleaning", seed_data.HOUSEKEEPING_CLEANING),
+                (ChecklistType.HOUSEKEEPING_INSPECTION, "Engineering items", seed_data.HOUSEKEEPING_INSPECTION),
                 (ChecklistType.ENGINEERING_INSPECTION, "Engineering verification", seed_data.ENGINEERING_INSPECTION),
             ):
                 tpl = ChecklistTemplate(name=title, checklist_type=ctype, department=CHECKLIST_DEPARTMENT[ctype])
@@ -160,12 +160,25 @@ def _m0005_user_roles(conn) -> None:
     conn.exec_driver_sql("UPDATE users SET role='TECHNICIAN' WHERE department='ENGINEERING' AND role='ADMIN'")
 
 
+def _m0006_daily_sheets(conn) -> None:
+    """Daily housekeeping task sheets (uploaded PDF), their rooms, and the link from a form to its room."""
+    from models.daily_sheet import DailySheet, DailySheetRoom
+
+    DailySheet.__table__.create(bind=conn, checkfirst=True)
+    DailySheetRoom.__table__.create(bind=conn, checkfirst=True)
+    cols = {c["name"] for c in inspect(conn).get_columns("inspection_sessions")}
+    if "daily_room_id" not in cols:
+        conn.exec_driver_sql("ALTER TABLE inspection_sessions ADD COLUMN daily_room_id INTEGER NULL")
+        conn.exec_driver_sql("CREATE INDEX ix_inspection_sessions_daily_room_id ON inspection_sessions (daily_room_id)")
+
+
 MIGRATIONS = [
     ("0001_initial_schema", _m0001_initial_schema),
     ("0002_seed_reference_data", _m0002_seed_reference_data),
     ("0003_direct_repairs", _m0003_direct_repairs),
     ("0004_attachment_files", _m0004_attachment_files),
     ("0005_user_roles", _m0005_user_roles),
+    ("0006_daily_sheets", _m0006_daily_sheets),
 ]
 
 

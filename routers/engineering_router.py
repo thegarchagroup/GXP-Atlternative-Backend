@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from core.permissions import require_admin, require_any, require_eng_supervisor_or_admin, require_engineering, require_engineering_or_admin
 from database.connection import get_db
 from models.enums import RepairStatus
+from models.inspection import InspectionSession
 from models.user import User
 from schemas.common import Page
 from schemas.inspection_schema import EngineeringChecklistSaveRequest, InspectionSessionOut, result_out, session_out
@@ -24,9 +25,7 @@ class EngineeringChecklistOut(BaseModel):
 
 
 def build_repair_detail(db: Session, repair) -> RepairDetailOut:
-    source = None
-    if repair.ticket is not None and repair.source_session_id:
-        source = next((s for s in repair.ticket.sessions if s.id == repair.source_session_id), None)
+    source = db.get(InspectionSession, repair.source_session_id) if repair.source_session_id else None
     failed = [r for r in source.results if r.result.value == "FAIL"] if source else []
     sessions = list(repair.sessions)
     return RepairDetailOut(

@@ -116,6 +116,12 @@ CHECKLIST_DEPARTMENT = {
 }
 
 
+class DailyRoomStatus(StrEnum):
+    PENDING = "PENDING"            # on the sheet, not started
+    IN_PROGRESS = "IN_PROGRESS"
+    DONE = "DONE"
+
+
 class SessionKind(StrEnum):
     HOUSEKEEPING = "HOUSEKEEPING"
     ENGINEERING = "ENGINEERING"

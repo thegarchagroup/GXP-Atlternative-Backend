@@ -19,7 +19,7 @@ def test_checklist_crud_admin_only(client, team):
     r = client.put(f"/api/v1/checklists/items/{item_id}", headers=team["hk_sup"], json={"room_type_ids": [9999]})
     assert r.status_code == 422
     lists = client.get("/api/v1/checklists?checklist_type=HOUSEKEEPING_INSPECTION", headers=team["hk1"]).json()
-    assert {c["name"] for c in lists} >= {"Room inspection", "Balcony"}
+    assert {c["name"] for c in lists} >= {"Engineering items", "Balcony"}
     assert client.delete(f"/api/v1/checklists/items/{item_id}", headers=team["hk_sup"]).status_code == 200
     assert client.delete(f"/api/v1/checklists/{cid}", headers=team["hk_sup"]).status_code == 200
     assert client.get(f"/api/v1/checklists/{cid}", headers=team["admin"]).status_code == 404

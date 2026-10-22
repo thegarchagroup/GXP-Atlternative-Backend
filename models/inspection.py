@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.base import Base, TimestampMixin, enum_type, utcnow
@@ -17,6 +18,8 @@ class InspectionSession(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("turnover_tickets.id"), nullable=True, index=True)
     repair_id: Mapped[Optional[int]] = mapped_column(ForeignKey("repair_requests.id"), nullable=True, index=True)
+    # set for a room attendant's form on a day's task sheet
+    daily_room_id: Mapped[Optional[int]] = mapped_column(ForeignKey("daily_sheet_rooms.id"), nullable=True, index=True)
     kind: Mapped[SessionKind] = mapped_column(enum_type(SessionKind), nullable=False)
     round_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_reclean: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -80,3 +83,15 @@ class Attachment(Base):
 
     inspection_result = relationship("InspectionResult", back_populates="attachments")
     uploaded_by = relationship("User", lazy="joined")
+    # loaded only when the file itself is requested
+    file = relationship("AttachmentFile", uselist=False, lazy="select", cascade="all, delete-orphan")
+
+
+class AttachmentFile(Base):
+    """The uploaded file's bytes, stored in the database so photos live wherever the data lives."""
+
+    __tablename__ = "attachment_files"
+
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("attachments.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary().with_variant(mysql.LONGBLOB(), "mysql"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
