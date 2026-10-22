@@ -34,7 +34,7 @@ CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 COOKIE_SECURE=false
 COOKIE_SAMESITE=lax
 
-HOTEL_TIMEZONE=Asia/Kolkata
+HOTEL_TIMEZONE=Asia/Singapore
 UPLOAD_DIR=./uploads
 MAX_UPLOAD_MB=8
 
